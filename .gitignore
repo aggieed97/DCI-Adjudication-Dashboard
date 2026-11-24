@@ -1,0 +1,5 @@
+.idea/
+ .venv/
+ venv/
+ __pycache__/
+ ./data/tableau_ready_dci_data.csv

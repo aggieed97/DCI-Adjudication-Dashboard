@@ -1,0 +1,1242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DCI Adjudication Volatility &amp; Ordinal Dissent Dashboard</title>
+
+  <!-- Tailwind CSS for responsive layout & modern styling -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Plotly.js for interactive statistical charts -->
+  <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+
+  <!-- PapaParse for fast client-side CSV parsing -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+
+  <!-- Inter Font -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'sans-serif'] },
+        }
+      }
+    };
+  </script>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans antialiased min-h-screen flex flex-col">
+
+  <!-- Top Navigation / Header -->
+  <header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div>
+        <div class="flex items-center gap-2.5">
+          <span class="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-indigo-600 text-white font-bold text-sm shadow-sm">
+            W
+          </span>
+          <h1 class="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
+            DCI Judging Volatility &amp; Ordinal Dissent
+          </h1>
+        </div>
+        <p class="text-xs sm:text-sm text-slate-500 mt-1">
+          Panel Concordance (Kendall's <em>W</em>) &amp; Individual Adjudicator Rank Deviations
+        </p>
+      </div>
+
+      <!-- Data Source Status + Local CSV Upload Controls -->
+      <div class="flex flex-wrap items-center gap-3">
+        <span id="dataBadge" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-amber-50 text-amber-800 border border-amber-200">
+          <span class="w-2 h-2 rounded-full bg-amber-500"></span>
+          Demo Dataset Active
+        </span>
+
+        <label for="csvFileInput" class="cursor-pointer inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold bg-slate-900 text-white hover:bg-slate-700 transition shadow-sm">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+          </svg>
+          Load Your CSV
+        </label>
+        <input id="csvFileInput" type="file" accept=".csv" class="hidden" />
+      </div>
+    </div>
+  </header>
+
+  <!-- Inline Notification Banner (replaces alert()) -->
+  <div id="toastBanner" class="hidden max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 mt-4">
+    <div id="toastInner" class="flex items-center justify-between px-4 py-3 rounded-xl text-sm font-medium border shadow-sm">
+      <span id="toastMessage"></span>
+      <button id="toastClose" class="ml-4 text-xs underline opacity-75 hover:opacity-100">Dismiss</button>
+    </div>
+  </div>
+
+  <!-- Main Content Container -->
+  <main class="max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6 flex-1">
+
+    <!-- Global Control Bar + KPI Strip -->
+    <section class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+      <!-- Season Selector Card -->
+      <div class="lg:col-span-3 bg-white rounded-2xl border border-slate-200 p-4 shadow-sm flex flex-col justify-center">
+        <label for="seasonSelect" class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">
+          Competitive Season
+        </label>
+        <select id="seasonSelect" class="w-full rounded-xl border border-slate-300 bg-slate-50 px-3 py-2.5 text-sm font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition">
+          <!-- Populated dynamically -->
+        </select>
+        <p class="text-[11px] text-slate-400 mt-1.5">Updates both the Heat Map and Bump Chart.</p>
+      </div>
+
+      <!-- KPI Cards -->
+      <div class="lg:col-span-9 grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div class="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
+          <p class="text-xs font-semibold uppercase tracking-wider text-slate-500">Avg. Panel Concordance (W)</p>
+          <p id="kpiAvgW" class="text-2xl font-bold text-slate-900 mt-1">--</p>
+          <p class="text-xs text-slate-500 mt-1">1.00 = Perfect panel consensus</p>
+        </div>
+
+        <div class="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
+          <p class="text-xs font-semibold uppercase tracking-wider text-slate-500">Most Volatile Caption</p>
+          <p id="kpiVolatileCaption" class="text-lg font-bold text-rose-600 mt-1 truncate">--</p>
+          <p id="kpiVolatileSub" class="text-xs text-slate-500 mt-1">Lowest seasonal mean W</p>
+        </div>
+
+        <div class="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
+          <p class="text-xs font-semibold uppercase tracking-wider text-slate-500">Peak Dissent Event</p>
+          <p id="kpiPeakEvent" class="text-lg font-bold text-indigo-700 mt-1 truncate">--</p>
+          <p id="kpiPeakSub" class="text-xs text-slate-500 mt-1">Single lowest W score</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- VISUALIZATION 1: CAPTION VOLATILITY HEAT MAP -->
+    <section class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-100 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+        <div>
+          <h2 class="text-base sm:text-lg font-bold text-slate-900">
+            1. Panel Volatility Heat Map (Kendall's <em>W</em>)
+          </h2>
+          <p class="text-xs text-slate-500 mt-0.5">
+            Numerical scale measures panel agreement (0.000 = complete dissent, 1.000 = perfect consensus).
+            <span class="font-medium text-indigo-600">Click any colored tile to cross-filter the Bump Chart below.</span>
+          </p>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-3">
+          <!-- Explicit N/A Visual Key Badge -->
+          <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 border border-slate-200 text-[11px] font-medium text-slate-600">
+            <span class="inline-block px-1.5 py-0.5 rounded bg-white border border-slate-300 text-[10px] font-semibold text-slate-400">N/A</span>
+            Single-judge panel (W undefined)
+          </span>
+
+          <label class="inline-flex items-center gap-2 text-xs font-medium text-slate-600 cursor-pointer select-none">
+            <input id="showEmptyCaptionsToggle" type="checkbox" checked class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+            Show single-judge captions
+          </label>
+
+          <button id="clearSelectionBtn" class="hidden px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 transition">
+            Clear Tile Filter
+          </button>
+        </div>
+      </div>
+
+      <!-- Active Cross-Filter Pill -->
+      <div id="crossFilterBar" class="hidden bg-indigo-50/80 border-b border-indigo-100 px-5 py-2 flex items-center justify-between text-xs text-indigo-900">
+        <span id="crossFilterText" class="font-medium"></span>
+      </div>
+
+      <!-- Plotly Heat Map Container -->
+      <div class="p-3 sm:p-5">
+        <div id="heatmapChart" class="w-full h-[380px] sm:h-[420px]"></div>
+      </div>
+    </section>
+
+    <!-- VISUALIZATION 2: CONSENSUS VS. JUDGE BUMP CHART -->
+    <section class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-100 space-y-4">
+        <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+          <div>
+            <h2 class="text-base sm:text-lg font-bold text-slate-900">
+              2. Ordinal Dissent Bump Chart (Consensus Line vs. Judge Dots)
+            </h2>
+            <!-- Clear Visual Key distinguishing Solid Lines, Ringed Dots, and Whiskers -->
+            <div class="flex flex-wrap items-center gap-4 mt-1.5 text-xs text-slate-600">
+              <span class="inline-flex items-center gap-1.5">
+                <span class="inline-block w-6 h-1 rounded-full bg-slate-700"></span>
+                <span><strong>Solid Line</strong> = Panel Consensus Rank</span>
+              </span>
+              <span class="inline-flex items-center gap-1.5">
+                <span class="inline-block w-3.5 h-3.5 rounded-full bg-white border-[3px] border-slate-700"></span>
+                <span><strong>Ringed Dot</strong> = Selected Judge's Rank</span>
+              </span>
+              <span class="inline-flex items-center gap-1.5">
+                <span class="inline-block w-5 border-t-2 border-dotted border-slate-500"></span>
+                <span><strong>Dotted Whisker</strong> = Magnitude of Dissent</span>
+              </span>
+            </div>
+          </div>
+
+          <label class="inline-flex items-center gap-2 text-xs font-medium text-slate-600 cursor-pointer select-none">
+            <input id="showWhiskersToggle" type="checkbox" checked class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+            Show dissent whiskers
+          </label>
+        </div>
+
+        <!-- Bump Chart Interactive Filters -->
+        <div class="grid grid-cols-1 md:grid-cols-12 gap-4 pt-1">
+          <!-- Caption Dropdown -->
+          <div class="md:col-span-3">
+            <label for="captionSelect" class="block text-xs font-semibold text-slate-500 mb-1">Caption</label>
+            <select id="captionSelect" class="w-full rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            </select>
+          </div>
+
+          <!-- Judge Dropdown -->
+          <div class="md:col-span-3">
+            <label for="judgeSelect" class="block text-xs font-semibold text-slate-500 mb-1">Adjudicator</label>
+            <select id="judgeSelect" class="w-full rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            </select>
+          </div>
+
+          <!-- Corps Multi-Select Chips -->
+          <div class="md:col-span-6">
+            <div class="flex items-center justify-between mb-1">
+              <span class="text-xs font-semibold text-slate-500">Select Corps to Compare (max 5 recommended)</span>
+              <button id="resetCorpsBtn" class="text-[11px] font-medium text-indigo-600 hover:underline">Reset Top 3</button>
+            </div>
+            <div id="corpsChipContainer" class="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto p-1.5 rounded-xl bg-slate-50 border border-slate-200">
+              <!-- Toggleable corps chips populated dynamically -->
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Plotly Bump Chart Container -->
+      <div class="p-3 sm:p-5">
+        <div id="bumpChart" class="w-full h-[420px] sm:h-[480px]"></div>
+      </div>
+    </section>
+
+    <!-- Methodology Footnote -->
+    <footer class="text-center text-xs text-slate-400 pb-6 pt-2">
+      Built with Plotly.js &amp; Tailwind CSS for GitHub Pages deployment.
+      Heat Map cells marked <strong>N/A</strong> indicate single-judge panels where Kendall's <em>W</em> is mathematically undefined.
+    </footer>
+  </main>
+
+  <script>
+    /**
+     * =========================================================================
+     * DCI JUDGING VOLATILITY DASHBOARD — APPLICATION STATE & LOGIC
+     * =========================================================================
+     */
+
+    // Standard DCI caption order for the Heat Map Y-axis
+    const ALL_CAPTIONS = [
+      'General Effect 1',
+      'General Effect 2',
+      'Music - Analysis',
+      'Music - Brass',
+      'Music - Percussion',
+      'Visual - Analysis',
+      'Visual Proficiency',
+      'Color Guard'
+    ];
+
+    // Official DCI Corps Primary Hex Colors
+    const CORPS_COLORS = {
+      'The Academy': '#CB2429',
+      'Blue Devils': '#003DA6',
+      'Blue Knights': '#0693E3',
+      'Blue Stars': '#59A8EE',
+      'Bluecoats': '#203265',
+      'Boston Crusaders': '#DA291C',
+      'The Cadets': '#811B30',
+      'Carolina Crown': '#632C4F',
+      'The Cavaliers': '#009445',
+      'Colts': '#CD3232',
+      'Crossmen': '#A4121F',
+      'Genesis': '#533A7B',
+      'Jersey Surf': '#004691',
+      'Madison Scouts': '#004B23',
+      'Mandarins': '#4B3963',
+      'Music City': '#E10600',
+      'Pacific Crest': '#208FA6',
+      'Phantom Regiment': '#CE0E2D',
+      'Santa Clara Vanguard': '#9E180B',
+      'Seattle Cascades': '#002C94',
+      'Spirit of Atlanta': '#8BB8E8',
+      'Troopers': '#1C4587',
+      'Star of Indiana': '#FF6699',
+      'Anaheim Kingsmen': '#6EA1EC'
+    };
+
+    // Fallback palette for Open Class or historical corps not in the primary dictionary
+    const FALLBACK_PALETTE = ['#0d9488', '#d97706', '#4f46e5', '#be123c', '#059669', '#6d28d9'];
+
+    // Central Application State
+    const state = {
+      heatmapRows: [],        // Array of { season, eventDate, eventName, captionName, panel_kendall_w }
+      bumpRows: [],           // Array of { season, eventDate, eventName, corpsName, captionName, judgeName, judge_rank, consensus_rank, rank_deviation }
+      selectedSeason: null,
+      selectedCaption: 'General Effect 1',
+      selectedJudge: null,
+      selectedCorps: new Set(['Blue Devils', 'Bluecoats', 'Santa Clara Vanguard']),
+      highlightedDate: null,  // Set when user clicks a Heat Map cell
+      highlightedEvent: null,
+      showEmptyCaptions: true,
+      showWhiskers: true
+    };
+
+    /**
+     * Generates a realistic embedded demo dataset (2024–2025) so the dashboard
+     * renders immediately in Preview mode or before CSVs are uploaded.
+     */
+    function buildDemoDataset() {
+      const heatmapRows = [
+        // 2024 Season (San Antonio, Atlanta, Allentown, Prelims, Semis, Finals)
+        { season: 2024, eventDate: '2024-07-20', eventName: 'DCI Southwestern Championship', captionName: 'General Effect 1', panel_kendall_w: 0.9612 },
+        { season: 2024, eventDate: '2024-07-20', eventName: 'DCI Southwestern Championship', captionName: 'General Effect 2', panel_kendall_w: 0.9540 },
+        { season: 2024, eventDate: '2024-07-20', eventName: 'DCI Southwestern Championship', captionName: 'Music - Analysis', panel_kendall_w: 0.9810 },
+        { season: 2024, eventDate: '2024-07-27', eventName: 'DCI Southeastern Championship', captionName: 'General Effect 1', panel_kendall_w: 0.9885 },
+        { season: 2024, eventDate: '2024-07-27', eventName: 'DCI Southeastern Championship', captionName: 'General Effect 2', panel_kendall_w: 0.9620 },
+        { season: 2024, eventDate: '2024-07-27', eventName: 'DCI Southeastern Championship', captionName: 'Music - Analysis', panel_kendall_w: 0.9845 },
+        { season: 2024, eventDate: '2024-08-02', eventName: 'DCI Eastern Classic', captionName: 'General Effect 1', panel_kendall_w: 0.9910 },
+        { season: 2024, eventDate: '2024-08-02', eventName: 'DCI Eastern Classic', captionName: 'General Effect 2', panel_kendall_w: 0.9380 },
+        { season: 2024, eventDate: '2024-08-02', eventName: 'DCI Eastern Classic', captionName: 'Music - Analysis', panel_kendall_w: 0.9942 },
+        { season: 2024, eventDate: '2024-08-08', eventName: 'World Championship Prelims', captionName: 'General Effect 1', panel_kendall_w: 0.9520 },
+        { season: 2024, eventDate: '2024-08-08', eventName: 'World Championship Prelims', captionName: 'General Effect 2', panel_kendall_w: 0.9495 },
+        { season: 2024, eventDate: '2024-08-08', eventName: 'World Championship Prelims', captionName: 'Music - Analysis', panel_kendall_w: 0.9710 },
+        { season: 2024, eventDate: '2024-08-09', eventName: 'World Championship Semifinals', captionName: 'General Effect 1', panel_kendall_w: 0.9460 },
+        { season: 2024, eventDate: '2024-08-09', eventName: 'World Championship Semifinals', captionName: 'General Effect 2', panel_kendall_w: 0.9570 },
+        { season: 2024, eventDate: '2024-08-09', eventName: 'World Championship Semifinals', captionName: 'Music - Analysis', panel_kendall_w: 0.9685 },
+        { season: 2024, eventDate: '2024-08-10', eventName: 'World Championship Finals', captionName: 'General Effect 1', panel_kendall_w: 0.9740 },
+        { season: 2024, eventDate: '2024-08-10', eventName: 'World Championship Finals', captionName: 'General Effect 2', panel_kendall_w: 0.9690 },
+        { season: 2024, eventDate: '2024-08-10', eventName: 'World Championship Finals', captionName: 'Music - Analysis', panel_kendall_w: 0.9860 },
+
+        // 2025 Season
+        { season: 2025, eventDate: '2025-07-19', eventName: 'DCI Southwestern Championship', captionName: 'General Effect 1', panel_kendall_w: 0.9680 },
+        { season: 2025, eventDate: '2025-07-19', eventName: 'DCI Southwestern Championship', captionName: 'General Effect 2', panel_kendall_w: 0.9755 },
+        { season: 2025, eventDate: '2025-07-19', eventName: 'DCI Southwestern Championship', captionName: 'Music - Analysis', panel_kendall_w: 0.9965 },
+        { season: 2025, eventDate: '2025-08-01', eventName: 'DCI Eastern Classic', captionName: 'General Effect 1', panel_kendall_w: 0.9790 },
+        { season: 2025, eventDate: '2025-08-01', eventName: 'DCI Eastern Classic', captionName: 'General Effect 2', panel_kendall_w: 0.9410 },
+        { season: 2025, eventDate: '2025-08-01', eventName: 'DCI Eastern Classic', captionName: 'Music - Analysis', panel_kendall_w: 0.9485 },
+        { season: 2025, eventDate: '2025-08-07', eventName: 'World Championship Prelims', captionName: 'General Effect 1', panel_kendall_w: 0.9580 },
+        { season: 2025, eventDate: '2025-08-07', eventName: 'World Championship Prelims', captionName: 'General Effect 2', panel_kendall_w: 0.9390 },
+        { season: 2025, eventDate: '2025-08-07', eventName: 'World Championship Prelims', captionName: 'Music - Analysis', panel_kendall_w: 0.9510 },
+        { season: 2025, eventDate: '2025-08-08', eventName: 'World Championship Semifinals', captionName: 'General Effect 1', panel_kendall_w: 0.9325 },
+        { season: 2025, eventDate: '2025-08-08', eventName: 'World Championship Semifinals', captionName: 'General Effect 2', panel_kendall_w: 0.9490 },
+        { season: 2025, eventDate: '2025-08-08', eventName: 'World Championship Semifinals', captionName: 'Music - Analysis', panel_kendall_w: 0.9535 },
+        { season: 2025, eventDate: '2025-08-09', eventName: 'World Championship Finals', captionName: 'General Effect 1', panel_kendall_w: 0.9280 },
+        { season: 2025, eventDate: '2025-08-09', eventName: 'World Championship Finals', captionName: 'General Effect 2', panel_kendall_w: 0.9640 },
+        { season: 2025, eventDate: '2025-08-09', eventName: 'World Championship Finals', captionName: 'Music - Analysis', panel_kendall_w: 0.9805 }
+      ];
+
+      // Realistic Bump Chart records across 2024 & 2025
+      const bumpRows = [];
+      const corpsList = [
+        'Bluecoats',
+        'Blue Devils',
+        'Boston Crusaders',
+        'Santa Clara Vanguard',
+        'Carolina Crown',
+        'Phantom Regiment',
+        'The Cavaliers',
+        'Mandarins'
+      ];
+      const judgesByCaption = {
+        'General Effect 1': ['C Dillon', 'M Tarr'],
+        'General Effect 2': ['W Dillon', 'M Hoskins'],
+        'Music - Analysis': ['J Wilson', 'N Konouchi'],
+        'Music - Percussion': ['M Griffin', 'J Brooks']
+      };
+
+      const eventsBySeason = {
+        2024: [
+          ['2024-07-06', 'DCI West'],
+          ['2024-07-13', 'Drums Along the Rockies'],
+          ['2024-07-20', 'DCI Southwestern Championship'],
+          ['2024-07-27', 'DCI Southeastern Championship'],
+          ['2024-08-02', 'DCI Eastern Classic'],
+          ['2024-08-08', 'World Championship Prelims'],
+          ['2024-08-09', 'World Championship Semifinals'],
+          ['2024-08-10', 'World Championship Finals']
+        ],
+        2025: [
+          ['2025-07-06', 'DCI West'],
+          ['2025-07-12', 'DCI Broken Arrow'],
+          ['2025-07-19', 'DCI Southwestern Championship'],
+          ['2025-07-26', 'DCI Southeastern Championship'],
+          ['2025-08-01', 'DCI Eastern Classic'],
+          ['2025-08-07', 'World Championship Prelims'],
+          ['2025-08-08', 'World Championship Semifinals'],
+          ['2025-08-09', 'World Championship Finals']
+        ]
+      };
+
+      // Deterministic pseudo-random generator so demo charts stay consistent
+      let seed = 42;
+      function nextRand() {
+        seed = (seed * 16807) % 2147483647;
+        return (seed - 1) / 2147483646;
+      }
+
+      [2024, 2025].forEach(season => {
+        Object.entries(judgesByCaption).forEach(([captionName, judges]) => {
+          eventsBySeason[season].forEach(([eventDate, eventName], eIdx) => {
+            const baseOrder = [...corpsList];
+            if (eIdx % 3 === 1) [baseOrder[1], baseOrder[2]] = [baseOrder[2], baseOrder[1]];
+            if (eIdx >= 5 && season === 2025) [baseOrder[2], baseOrder[3]] = [baseOrder[3], baseOrder[2]];
+
+            judges.forEach(judgeName => {
+              baseOrder.forEach((corpsName, idx) => {
+                const consensus_rank = idx + 1;
+                const r = nextRand();
+                let shift = 0;
+                const dissentProb = captionName.startsWith('General Effect') ? 0.52 : 0.35;
+                if (r < dissentProb / 2) shift = -1;
+                else if (r < dissentProb) shift = 1;
+                else if (r > 0.91) shift = consensus_rank <= 3 ? 2 : -2;
+
+                const judge_rank = Math.max(1, Math.min(corpsList.length, consensus_rank + shift));
+                bumpRows.push({
+                  season,
+                  eventDate,
+                  eventName,
+                  corpsName,
+                  captionName,
+                  judgeName,
+                  judge_rank,
+                  consensus_rank,
+                  rank_deviation: consensus_rank - judge_rank
+                });
+              });
+            });
+          });
+        });
+      });
+
+      return { heatmapRows, bumpRows };
+    }
+
+    /**
+     * Inline Toast Notification helper (never uses alert())
+     */
+    function showToast(message, type = 'info') {
+      const banner = document.getElementById('toastBanner');
+      const inner = document.getElementById('toastInner');
+      const msgEl = document.getElementById('toastMessage');
+
+      const styles = {
+        info: 'bg-indigo-50 text-indigo-900 border-indigo-200',
+        success: 'bg-emerald-50 text-emerald-900 border-emerald-200',
+        error: 'bg-rose-50 text-rose-900 border-rose-200'
+      };
+
+      inner.className = `flex items-center justify-between px-4 py-3 rounded-xl text-sm font-medium border shadow-sm ${styles[type] || styles.info}`;
+      msgEl.textContent = message;
+      banner.classList.remove('hidden');
+    }
+
+    /**
+     * Helper to assign a consistent official hex color to any DCI corps
+     */
+    function getCorpsColor(corpsName, fallbackIdx = 0) {
+      if (CORPS_COLORS[corpsName]) return CORPS_COLORS[corpsName];
+      return FALLBACK_PALETTE[fallbackIdx % FALLBACK_PALETTE.length];
+    }
+
+    /**
+     * Formats YYYY-MM-DD as MM/DD for clean X-axis tick labels
+     */
+    function formatShortDate(isoDate) {
+      if (!isoDate || typeof isoDate !== 'string') return '';
+      const parts = isoDate.split('T')[0].split('-');
+      if (parts.length === 3) return `${parts[1]}/${parts[2]}`;
+      return isoDate;
+    }
+
+    /**
+     * Populates the Season dropdown and initializes dependent controls
+     */
+    function initializeControls() {
+      const seasonSet = new Set([
+        ...state.heatmapRows.map(r => r.season),
+        ...state.bumpRows.map(r => r.season)
+      ]);
+      const seasons = Array.from(seasonSet).filter(Boolean).sort((a, b) => b - a);
+
+      const seasonSelect = document.getElementById('seasonSelect');
+      seasonSelect.innerHTML = '';
+      seasons.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s;
+        opt.textContent = `${s} DCI Season`;
+        seasonSelect.appendChild(opt);
+      });
+
+      state.selectedSeason = seasons[0] || 2025;
+      seasonSelect.value = state.selectedSeason;
+
+      syncSeasonControls();
+      renderAll();
+    }
+
+    /**
+     * Updates Caption, Judge, and Corps controls whenever Season changes
+     */
+    function syncSeasonControls() {
+      const seasonBump = state.bumpRows.filter(r => r.season === state.selectedSeason);
+      const captions = Array.from(new Set(seasonBump.map(r => r.captionName))).sort();
+
+      const captionSelect = document.getElementById('captionSelect');
+      captionSelect.innerHTML = '';
+      captions.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c;
+        opt.textContent = c;
+        captionSelect.appendChild(opt);
+      });
+
+      if (!captions.includes(state.selectedCaption)) {
+        state.selectedCaption = captions[0] || '';
+      }
+      captionSelect.value = state.selectedCaption;
+
+      syncJudgeAndCorpsControls();
+    }
+
+    /**
+     * Updates Judge dropdown and Corps chips whenever Caption changes
+     */
+    function syncJudgeAndCorpsControls() {
+      const filtered = state.bumpRows.filter(
+        r => r.season === state.selectedSeason && r.captionName === state.selectedCaption
+      );
+
+      // Populate Judges sorted by evaluation count (most active judges first)
+      const judgeCounts = {};
+      filtered.forEach(r => {
+        judgeCounts[r.judgeName] = (judgeCounts[r.judgeName] || 0) + 1;
+      });
+      const judges = Object.keys(judgeCounts).sort((a, b) => judgeCounts[b] - judgeCounts[a]);
+
+      const judgeSelect = document.getElementById('judgeSelect');
+      judgeSelect.innerHTML = '';
+      judges.forEach(j => {
+        const opt = document.createElement('option');
+        opt.value = j;
+        opt.textContent = `${j} (${judgeCounts[j]} evals)`;
+        judgeSelect.appendChild(opt);
+      });
+
+      if (!judges.includes(state.selectedJudge)) {
+        state.selectedJudge = judges[0] || '';
+      }
+      judgeSelect.value = state.selectedJudge;
+
+      renderCorpsChips();
+    }
+
+    /**
+     * Renders interactive toggle chips for corps judged by the active adjudicator
+     */
+    function renderCorpsChips() {
+      const container = document.getElementById('corpsChipContainer');
+      container.innerHTML = '';
+
+      const judgeRows = state.bumpRows.filter(
+        r =>
+          r.season === state.selectedSeason &&
+          r.captionName === state.selectedCaption &&
+          r.judgeName === state.selectedJudge
+      );
+
+      // Sort corps by best average consensus rank
+      const rankSums = {};
+      const rankCounts = {};
+      judgeRows.forEach(r => {
+        rankSums[r.corpsName] = (rankSums[r.corpsName] || 0) + r.consensus_rank;
+        rankCounts[r.corpsName] = (rankCounts[r.corpsName] || 0) + 1;
+      });
+
+      const availableCorps = Object.keys(rankSums).sort(
+        (a, b) => (rankSums[a] / rankCounts[a]) - (rankSums[b] / rankCounts[b])
+      );
+
+      // Ensure at least 1 selected corps is visible in this view
+      const activeInView = availableCorps.filter(c => state.selectedCorps.has(c));
+      if (activeInView.length === 0 && availableCorps.length > 0) {
+        state.selectedCorps = new Set(availableCorps.slice(0, 3));
+      }
+
+      availableCorps.forEach((corps, idx) => {
+        const isActive = state.selectedCorps.has(corps);
+        const color = getCorpsColor(corps, idx);
+
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = isActive
+          ? 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold text-white shadow-sm transition'
+          : 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-white text-slate-600 border border-slate-300 hover:bg-slate-100 transition';
+
+        if (isActive) {
+          btn.style.backgroundColor = color;
+        }
+
+        btn.innerHTML = `<span class="w-2 h-2 rounded-full" style="background-color:${isActive ? '#ffffff' : color}"></span>${corps}`;
+        btn.addEventListener('click', () => {
+          if (state.selectedCorps.has(corps)) {
+            if (state.selectedCorps.size > 1) state.selectedCorps.delete(corps);
+          } else {
+            state.selectedCorps.add(corps);
+          }
+          renderCorpsChips();
+          renderBumpChart();
+        });
+        container.appendChild(btn);
+      });
+    }
+
+    /**
+     * Updates the top KPI summary cards for the selected season
+     */
+    function updateKPIs() {
+      const seasonHM = state.heatmapRows.filter(
+        r => r.season === state.selectedSeason && !isNaN(r.panel_kendall_w)
+      );
+
+      const avgEl = document.getElementById('kpiAvgW');
+      const volCapEl = document.getElementById('kpiVolatileCaption');
+      const volSubEl = document.getElementById('kpiVolatileSub');
+      const peakEvEl = document.getElementById('kpiPeakEvent');
+      const peakSubEl = document.getElementById('kpiPeakSub');
+
+      if (seasonHM.length === 0) {
+        avgEl.textContent = 'N/A';
+        volCapEl.textContent = 'No double panels';
+        volSubEl.textContent = 'Select another season';
+        peakEvEl.textContent = '--';
+        peakSubEl.textContent = '--';
+        return;
+      }
+
+      // 1. Overall Mean Kendall's W
+      const totalW = seasonHM.reduce((acc, r) => acc + r.panel_kendall_w, 0);
+      const meanW = totalW / seasonHM.length;
+      avgEl.textContent = meanW.toFixed(4);
+
+      // 2. Most Volatile Caption (Lowest Average W)
+      const capStats = {};
+      seasonHM.forEach(r => {
+        if (!capStats[r.captionName]) capStats[r.captionName] = { sum: 0, count: 0 };
+        capStats[r.captionName].sum += r.panel_kendall_w;
+        capStats[r.captionName].count += 1;
+      });
+      let worstCap = null;
+      let worstMean = Infinity;
+      Object.entries(capStats).forEach(([cap, st]) => {
+        const m = st.sum / st.count;
+        if (m < worstMean) {
+          worstMean = m;
+          worstCap = cap;
+        }
+      });
+      volCapEl.textContent = worstCap;
+      volSubEl.textContent = `Mean W = ${worstMean.toFixed(4)}`;
+
+      // 3. Peak Dissent Event (Single Lowest W)
+      const lowestRow = seasonHM.reduce((min, r) => (r.panel_kendall_w < min.panel_kendall_w ? r : min), seasonHM[0]);
+      peakEvEl.textContent = lowestRow.eventName;
+      peakSubEl.textContent = `${lowestRow.captionName} (${formatShortDate(lowestRow.eventDate)}) · W = ${lowestRow.panel_kendall_w.toFixed(4)}`;
+    }
+
+    /**
+     * Renders Visualization 1: Panel Volatility Heat Map (Plotly.js)
+     * Includes explicit numerical color scale and clearly marked "N/A" cells for
+     * unavailable single-judge panels per professor feedback.
+     */
+    function renderHeatMap() {
+      const container = document.getElementById('heatmapChart');
+      const seasonHM = state.heatmapRows.filter(
+        r => r.season === state.selectedSeason && !isNaN(r.panel_kendall_w)
+      );
+
+      if (seasonHM.length === 0) {
+        Plotly.purge(container);
+        container.innerHTML = '<div class="h-full flex items-center justify-center text-sm text-slate-400">No double-panel Kendall\'s W data available for this season.</div>';
+        return;
+      }
+
+      // Unique sorted dates for X-axis
+      const dates = Array.from(new Set(seasonHM.map(r => r.eventDate))).sort();
+      const dateLabels = dates.map(formatShortDate);
+
+      // Captions for Y-axis (either full DCI sheet or only populated double-panel captions)
+      const populatedCaptions = Array.from(new Set(seasonHM.map(r => r.captionName)));
+      const yCaptions = state.showEmptyCaptions
+        ? [...ALL_CAPTIONS].reverse()
+        : ALL_CAPTIONS.filter(c => populatedCaptions.includes(c)).reverse();
+
+      // Compute seasonal min/max W to determine text contrast cleanly
+      const wValues = seasonHM.map(r => r.panel_kendall_w);
+      const minW = Math.min(...wValues);
+      const maxW = Math.max(...wValues);
+
+      // Build 2D Z-matrix, rich hover text, and cell annotations (values + explicit N/A markers)
+      const zMatrix = [];
+      const hoverMatrix = [];
+      const cellAnnotations = [];
+
+      yCaptions.forEach(caption => {
+        const zRow = [];
+        const hRow = [];
+
+        dates.forEach((date, dIdx) => {
+          const shortDate = dateLabels[dIdx];
+          const match = seasonHM.find(r => r.captionName === caption && r.eventDate === date);
+
+          if (match) {
+            zRow.push(match.panel_kendall_w);
+            hRow.push(
+              `<b>${match.eventName}</b><br>` +
+              `Date: ${match.eventDate}<br>` +
+              `Caption: ${match.captionName}<br>` +
+              `Kendall's W: <b>${match.panel_kendall_w.toFixed(4)}</b><br>` +
+              `<i>Click tile to filter Bump Chart</i>`
+            );
+
+            // Pick readable text color based on normalized position in the palette
+            const norm = maxW > minW ? (match.panel_kendall_w - minW) / (maxW - minW) : 0.5;
+            const isLightTile = norm > 0.62 && norm < 0.88;
+
+            cellAnnotations.push({
+              x: shortDate,
+              y: caption,
+              text: `<b>${match.panel_kendall_w.toFixed(3)}</b>`,
+              showarrow: false,
+              font: {
+                family: 'Inter, sans-serif',
+                size: 11,
+                color: isLightTile ? '#0f172a' : '#ffffff'
+              }
+            });
+          } else {
+            zRow.push(null);
+            hRow.push(
+              `<b>Unavailable (N/A)</b><br>` +
+              `Date: ${date}<br>` +
+              `Caption: ${caption}<br>` +
+              `<i>Single-judge panel — Kendall's W requires ≥ 2 judges.</i>`
+            );
+
+            // Explicitly mark unavailable cells as N/A
+            cellAnnotations.push({
+              x: shortDate,
+              y: caption,
+              text: 'N/A',
+              showarrow: false,
+              font: {
+                family: 'Inter, sans-serif',
+                size: 10,
+                color: '#94a3b8'
+              }
+            });
+          }
+        });
+
+        zMatrix.push(zRow);
+        hoverMatrix.push(hRow);
+      });
+
+      const trace = {
+        type: 'heatmap',
+        x: dateLabels,
+        y: yCaptions,
+        z: zMatrix,
+        hovertext: hoverMatrix,
+        hoverinfo: 'text',
+        xgap: 3,
+        ygap: 3,
+        // Deep Crimson = Low W (High Dissent), Cool Blue = High W (High Consensus)
+        colorscale: [
+          [0.0, '#9f1239'],
+          [0.35, '#e11d48'],
+          [0.65, '#fb7185'],
+          [0.85, '#93c5fd'],
+          [1.0, '#1d4ed8']
+        ],
+        // Explicit numerical color scale bar
+        colorbar: {
+          title: {
+            text: "Kendall's W<br>(Higher = Agreement)",
+            side: 'right',
+            font: { size: 11, color: '#334155', family: 'Inter, sans-serif' }
+          },
+          thickness: 16,
+          len: 0.9,
+          tickformat: '.3f',
+          nticks: 6,
+          ticks: 'outside',
+          tickcolor: '#64748b',
+          tickfont: { size: 11, color: '#334155', family: 'Inter, sans-serif' },
+          outlinewidth: 1,
+          outlinecolor: '#cbd5e1'
+        }
+      };
+
+      const layout = {
+        margin: { l: 135, r: 95, t: 15, b: 45 },
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: '#f1f5f9', // Subtle slate background makes N/A cells visually distinct
+        font: { family: 'Inter, sans-serif', color: '#334155', size: 12 },
+        xaxis: {
+          title: { text: `${state.selectedSeason} Double-Panel Events`, font: { size: 12, color: '#64748b' } },
+          type: 'category',
+          showgrid: false,
+          zeroline: false
+        },
+        yaxis: {
+          type: 'category',
+          showgrid: false,
+          zeroline: false,
+          automargin: true
+        },
+        annotations: cellAnnotations
+      };
+
+      Plotly.newPlot(container, [trace], layout, { responsive: true, displayModeBar: false });
+
+      // Attach Click-to-Filter Cross-Interactivity
+      container.removeAllListeners && container.removeAllListeners('plotly_click');
+      container.on('plotly_click', eventData => {
+        if (!eventData || !eventData.points || !eventData.points.length) return;
+        const pt = eventData.points[0];
+        if (pt.z === null || pt.z === undefined) return; // Ignore N/A tiles
+
+        const clickedCaption = pt.y;
+        const clickedDateIdx = dateLabels.indexOf(pt.x);
+        const clickedIsoDate = dates[clickedDateIdx];
+        const match = seasonHM.find(r => r.captionName === clickedCaption && r.eventDate === clickedIsoDate);
+
+        state.highlightedDate = clickedIsoDate;
+        state.highlightedEvent = match ? match.eventName : clickedIsoDate;
+
+        // Sync Bump Chart caption if available
+        const captionSelect = document.getElementById('captionSelect');
+        const hasCaption = Array.from(captionSelect.options).some(o => o.value === clickedCaption);
+        if (hasCaption) {
+          state.selectedCaption = clickedCaption;
+          captionSelect.value = clickedCaption;
+          syncJudgeAndCorpsControls();
+        }
+
+        // Update Cross-Filter UI Banner
+        document.getElementById('clearSelectionBtn').classList.remove('hidden');
+        document.getElementById('crossFilterBar').classList.remove('hidden');
+        document.getElementById('crossFilterText').textContent =
+          `Cross-Filter Active: ${clickedCaption} on ${clickedIsoDate} (${state.highlightedEvent}) — Highlighted on Bump Chart below.`;
+
+        renderBumpChart();
+      });
+    }
+
+    /**
+     * Renders Visualization 2: Consensus vs. Judge Bump Chart (Plotly.js)
+     * Uses official DCI hex colors, direct end-of-line corps labels, and
+     * white-centered ringed dots so judge placements stand out clearly from lines.
+     */
+    function renderBumpChart() {
+      const container = document.getElementById('bumpChart');
+      const filtered = state.bumpRows.filter(
+        r =>
+          r.season === state.selectedSeason &&
+          r.captionName === state.selectedCaption &&
+          r.judgeName === state.selectedJudge &&
+          state.selectedCorps.has(r.corpsName)
+      );
+
+      if (filtered.length === 0) {
+        Plotly.purge(container);
+        container.innerHTML = '<div class="h-full flex items-center justify-center text-sm text-slate-400">No evaluations match this Season / Caption / Judge / Corps combination.</div>';
+        return;
+      }
+
+      const allDates = Array.from(new Set(filtered.map(r => r.eventDate))).sort();
+      const corpsList = Array.from(state.selectedCorps).filter(c => filtered.some(r => r.corpsName === c));
+      const traces = [];
+      const annotations = [];
+
+      let maxRank = 1;
+      // Track endpoint label positions to prevent overlapping labels on ties
+      const endpointCounts = {};
+
+      corpsList.forEach((corps, idx) => {
+        const color = getCorpsColor(corps, idx);
+        const rows = filtered
+          .filter(r => r.corpsName === corps)
+          .sort((a, b) => a.eventDate.localeCompare(b.eventDate));
+
+        const xDates = rows.map(r => formatShortDate(r.eventDate));
+        const yConsensus = rows.map(r => r.consensus_rank);
+        const yJudge = rows.map(r => r.judge_rank);
+
+        rows.forEach(r => {
+          maxRank = Math.max(maxRank, Math.ceil(r.consensus_rank), Math.ceil(r.judge_rank));
+        });
+
+        // Optional: Dotted vertical dissent whiskers connecting Consensus -> Judge rank
+        if (state.showWhiskers) {
+          const wx = [];
+          const wy = [];
+          rows.forEach(r => {
+            if (Math.abs(r.consensus_rank - r.judge_rank) > 0.01) {
+              const lbl = formatShortDate(r.eventDate);
+              wx.push(lbl, lbl, null);
+              wy.push(r.consensus_rank, r.judge_rank, null);
+            }
+          });
+
+          if (wx.length > 0) {
+            traces.push({
+              type: 'scatter',
+              mode: 'lines',
+              x: wx,
+              y: wy,
+              line: { color: color, width: 1.75, dash: 'dot' },
+              opacity: 0.65,
+              showlegend: false,
+              hoverinfo: 'skip'
+            });
+          }
+        }
+
+        // Trace A: Solid Consensus Line
+        traces.push({
+          type: 'scatter',
+          mode: 'lines',
+          name: `${corps} (Consensus Line)`,
+          legendgroup: corps,
+          x: xDates,
+          y: yConsensus,
+          line: { color: color, width: 3.25, shape: 'linear' },
+          hovertext: rows.map(
+            r =>
+              `<b>${corps} — Panel Consensus</b><br>` +
+              `${r.eventName} (${r.eventDate})<br>` +
+              `Consensus Rank: <b>#${r.consensus_rank}</b>`
+          ),
+          hoverinfo: 'text'
+        });
+
+        // Trace B: White-Centered Ringed Dots for Judge Rank (distinct even when on the line)
+        traces.push({
+          type: 'scatter',
+          mode: 'markers',
+          name: `${corps} (${state.selectedJudge} Dot)`,
+          legendgroup: corps,
+          showlegend: false,
+          x: xDates,
+          y: yJudge,
+          marker: {
+            symbol: 'circle',
+            color: '#ffffff',
+            size: 11,
+            line: { color: color, width: 3 }
+          },
+          hovertext: rows.map(r => {
+            const diff = r.consensus_rank - r.judge_rank;
+            const diffLabel =
+              diff === 0
+                ? 'Exact Consensus Match'
+                : diff > 0
+                  ? `Ranked ${diff} spot(s) HIGHER than panel`
+                  : `Ranked ${Math.abs(diff)} spot(s) LOWER than panel`;
+            return (
+              `<b>${corps} — ${state.selectedJudge}</b><br>` +
+              `${r.eventName} (${r.eventDate})<br>` +
+              `Judge Rank: <b>#${r.judge_rank}</b> (Panel: #${r.consensus_rank})<br>` +
+              `<i>${diffLabel}</i>`
+            );
+          }),
+          hoverinfo: 'text'
+        });
+
+        // Direct End-of-Line Corps Label (per professor feedback)
+        const lastRow = rows[rows.length - 1];
+        const lastX = formatShortDate(lastRow.eventDate);
+        const lastY = lastRow.consensus_rank;
+        const posKey = `${lastX}|${lastY}`;
+        const overlapCount = endpointCounts[posKey] || 0;
+        endpointCounts[posKey] = overlapCount + 1;
+
+        annotations.push({
+          x: lastX,
+          y: lastY,
+          xref: 'x',
+          yref: 'y',
+          xanchor: 'left',
+          xshift: 12,
+          yshift: overlapCount * -14, // Slight offset if two corps finish tied on the final date
+          text: `<b>${corps}</b>`,
+          showarrow: false,
+          font: {
+            family: 'Inter, sans-serif',
+            size: 11.5,
+            color: color
+          },
+          bgcolor: 'rgba(255,255,255,0.85)',
+          borderpad: 2
+        });
+      });
+
+      // Highlight vertical reference line if user clicked a Heat Map event
+      const shapes = [];
+      if (state.highlightedDate) {
+        const shortHighlighted = formatShortDate(state.highlightedDate);
+        if (allDates.includes(state.highlightedDate)) {
+          shapes.push({
+            type: 'line',
+            xref: 'x',
+            yref: 'paper',
+            x0: shortHighlighted,
+            x1: shortHighlighted,
+            y0: 0,
+            y1: 1,
+            line: { color: '#4f46e5', width: 2, dash: 'dash' }
+          });
+          annotations.push({
+            x: shortHighlighted,
+            y: 1.05,
+            xref: 'x',
+            yref: 'paper',
+            text: `Selected Event`,
+            showarrow: false,
+            font: { size: 11, color: '#4f46e5', family: 'Inter, sans-serif' }
+          });
+        }
+      }
+
+      const layout = {
+        // Generous right margin so direct end-of-line corps labels never clip
+        margin: { l: 55, r: 170, t: 32, b: 60 },
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: '#ffffff',
+        font: { family: 'Inter, sans-serif', color: '#334155', size: 12 },
+        hovermode: 'closest',
+        legend: {
+          orientation: 'h',
+          y: -0.2,
+          x: 0.5,
+          xanchor: 'center'
+        },
+        xaxis: {
+          type: 'category',
+          categoryorder: 'array',
+          categoryarray: allDates.map(formatShortDate),
+          showgrid: true,
+          gridcolor: '#f1f5f9',
+          title: { text: `${state.selectedSeason} Event Dates`, font: { size: 12, color: '#64748b' } }
+        },
+        yaxis: {
+          title: { text: 'Competitive Placement (1 = First)', font: { size: 12, color: '#64748b' } },
+          range: [maxRank + 0.5, 0.5], // Strictly reversed: 1st place at top
+          dtick: 1,                    // Force whole integers only
+          tick0: 1,
+          showgrid: true,
+          gridcolor: '#e2e8f0',
+          zeroline: false
+        },
+        shapes,
+        annotations
+      };
+
+      Plotly.newPlot(container, traces, layout, { responsive: true, displayModeBar: false });
+    }
+
+    /**
+     * Master render trigger
+     */
+    function renderAll() {
+      updateKPIs();
+      renderHeatMap();
+      renderBumpChart();
+    }
+
+    /**
+     * Parses a user-uploaded CSV (either the full tableau_ready_dci_data.csv
+     * or a slimmed CSV) directly inside the browser.
+     */
+    function handleLocalCsvUpload(file) {
+      showToast(`Parsing ${file.name}... Please wait a moment for large files.`, 'info');
+
+      Papa.parse(file, {
+        header: true,
+        dynamicTyping: true,
+        skipEmptyLines: true,
+        complete: results => {
+          try {
+            const raw = results.data;
+            if (!raw || raw.length === 0) {
+              showToast('The uploaded CSV appears to be empty.', 'error');
+              return;
+            }
+
+            const hmMap = new Map();
+            const bumpList = [];
+
+            raw.forEach(row => {
+              if (!row.season || !row.eventDate || !row.captionName) return;
+
+              // Standardize date & caption names on the fly
+              const isoDate = String(row.eventDate).split('T')[0];
+              let cap = String(row.captionName).trim();
+              if (cap === 'Visual Analysis') cap = 'Visual - Analysis';
+              if (cap === 'Penalties' || cap === 'Timing & Penalties' || cap.startsWith('Special')) return;
+
+              // Collect Heat Map records (unique per season/date/event/caption)
+              if (row.panel_kendall_w !== null && row.panel_kendall_w !== undefined && row.panel_kendall_w !== '' && !isNaN(row.panel_kendall_w)) {
+                const key = `${row.season}|${isoDate}|${row.eventName}|${cap}`;
+                if (!hmMap.has(key)) {
+                  hmMap.set(key, {
+                    season: Number(row.season),
+                    eventDate: isoDate,
+                    eventName: row.eventName || 'DCI Event',
+                    captionName: cap,
+                    panel_kendall_w: Number(row.panel_kendall_w)
+                  });
+                }
+              }
+
+              // Collect Bump Chart records
+              if (row.judgeName && row.corpsName && !isNaN(row.judge_rank) && !isNaN(row.consensus_rank)) {
+                bumpList.push({
+                  season: Number(row.season),
+                  eventDate: isoDate,
+                  eventName: row.eventName || 'DCI Event',
+                  corpsName: String(row.corpsName).trim(),
+                  captionName: cap,
+                  judgeName: String(row.judgeName).trim(),
+                  judge_rank: Number(row.judge_rank),
+                  consensus_rank: Number(row.consensus_rank),
+                  rank_deviation: Number(row.consensus_rank) - Number(row.judge_rank)
+                });
+              }
+            });
+
+            state.heatmapRows = Array.from(hmMap.values());
+            state.bumpRows = bumpList;
+            state.highlightedDate = null;
+
+            const badge = document.getElementById('dataBadge');
+            badge.className = 'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-800 border border-emerald-200';
+            badge.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-500"></span>Live CSV Loaded (${raw.length.toLocaleString()} rows)`;
+
+            initializeControls();
+            showToast(`Successfully loaded ${raw.length.toLocaleString()} rows from ${file.name}!`, 'success');
+          } catch (err) {
+            showToast(`Error processing CSV: ${err.message}`, 'error');
+          }
+        },
+        error: err => {
+          showToast(`Failed to parse CSV: ${err.message}`, 'error');
+        }
+      });
+    }
+
+    /**
+     * Attempts to load pre-slimmed CSVs from ./data/ (for GitHub Pages).
+     * Falls back cleanly to the embedded demo dataset if not hosted yet.
+     */
+    async function loadInitialData() {
+      try {
+        const [hmRes, bumpRes] = await Promise.all([
+          fetch('./data/heatmap_data.csv'),
+          fetch('./data/bumpchart_data.csv')
+        ]);
+
+        if (hmRes.ok && bumpRes.ok) {
+          const [hmText, bumpText] = await Promise.all([hmRes.text(), bumpRes.text()]);
+          state.heatmapRows = Papa.parse(hmText, { header: true, dynamicTyping: true, skipEmptyLines: true }).data;
+          state.bumpRows = Papa.parse(bumpText, { header: true, dynamicTyping: true, skipEmptyLines: true }).data;
+
+          const badge = document.getElementById('dataBadge');
+          badge.className = 'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-800 border border-emerald-200';
+          badge.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-500"></span>GitHub Pages Data Live`;
+        } else {
+          throw new Error('Relative /data CSVs not found; using demo mode.');
+        }
+      } catch (_err) {
+        const demo = buildDemoDataset();
+        state.heatmapRows = demo.heatmapRows;
+        state.bumpRows = demo.bumpRows;
+      }
+
+      initializeControls();
+    }
+
+    // Wire up DOM Event Listeners on Page Load
+    document.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('seasonSelect').addEventListener('change', e => {
+        state.selectedSeason = Number(e.target.value);
+        state.highlightedDate = null;
+        document.getElementById('clearSelectionBtn').classList.add('hidden');
+        document.getElementById('crossFilterBar').classList.add('hidden');
+        syncSeasonControls();
+        renderAll();
+      });
+
+      document.getElementById('captionSelect').addEventListener('change', e => {
+        state.selectedCaption = e.target.value;
+        syncJudgeAndCorpsControls();
+        renderBumpChart();
+      });
+
+      document.getElementById('judgeSelect').addEventListener('change', e => {
+        state.selectedJudge = e.target.value;
+        renderCorpsChips();
+        renderBumpChart();
+      });
+
+      document.getElementById('showEmptyCaptionsToggle').addEventListener('change', e => {
+        state.showEmptyCaptions = e.target.checked;
+        renderHeatMap();
+      });
+
+      document.getElementById('showWhiskersToggle').addEventListener('change', e => {
+        state.showWhiskers = e.target.checked;
+        renderBumpChart();
+      });
+
+      document.getElementById('clearSelectionBtn').addEventListener('click', () => {
+        state.highlightedDate = null;
+        state.highlightedEvent = null;
+        document.getElementById('clearSelectionBtn').classList.add('hidden');
+        document.getElementById('crossFilterBar').classList.add('hidden');
+        renderBumpChart();
+      });
+
+      document.getElementById('resetCorpsBtn').addEventListener('click', () => {
+        state.selectedCorps.clear();
+        renderCorpsChips();
+        renderBumpChart();
+      });
+
+      document.getElementById('csvFileInput').addEventListener('change', e => {
+        if (e.target.files && e.target.files[0]) {
+          handleLocalCsvUpload(e.target.files[0]);
+        }
+      });
+
+      document.getElementById('toastClose').addEventListener('click', () => {
+        document.getElementById('toastBanner').classList.add('hidden');
+      });
+
+      loadInitialData();
+    });
+  </script>
+</body>
+</html>
